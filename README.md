@@ -1,221 +1,132 @@
-# OneClick Media Forwarder 
+# Telegram Media Forwarder
 
-A Python script that automatically forwards all media messages (photos, videos, files) from any Telegram source (group, channel, DM, username) to any target — including real-time live forwarding.
+A collection of Python scripts, built on [Telethon](https://github.com/LonamiWebs/Telethon), for automatically forwarding photos, videos, and files between Telegram chats, channels, or groups. Old media is backfilled in bulk, new media is forwarded in real time, and duplicates are always skipped.
 
----
+Beyond the original single-account forwarder, this repo now includes a **multi-account mode** that automatically rotates between Telegram accounts when one hits a `FloodWait`, so a large backfill can keep running instead of sitting idle, plus a **smart-fill mode** that diffs a source against a target and only forwards what's actually missing.
 
 ## Features
 
-- Forwards all old media messages from source to target
-- Listens and forwards new media messages in real-time
-- Skips already forwarded messages (no duplicates)
-- Auto-resumes after restart from where it left off
-- Handles Telegram FloodWait automatically
-- Auto-reconnects on network drop or crash
-- Works with groups, channels, DMs, and public usernames
+- Forwards all existing media from a source chat to a target chat, then switches to live listening for new messages
+- Skips duplicates via a persistent `forwarded_ids.txt` log
+- Resumes automatically after a crash or restart using a saved checkpoint
+- Groups albums (multiple photos/videos sent together) and forwards them as a single album instead of separate messages
+- Handles Telegram's `FloodWait` rate limiting automatically
+- **Multi-account rotation**: when an account is flood-waited, forwarding continues on the next account in the pool instead of stopping
+- **Smart-fill**: scans the target channel first, builds a set of media already present, and forwards only what's missing from the source — no re-sending duplicates on a partially-filled target
+- Works with usernames, numeric chat IDs, or phone numbers as source/target
 
----
+## Project structure
+
+| File | Purpose |
+|---|---|
+| `config.py` | Shared configuration — `SOURCE`, `TARGET`, and the `ACCOUNTS` pool used by every script |
+| `login_accounts.py` | One-time helper that logs in every account in `ACCOUNTS` and saves its session file |
+| `AccountSwitch_Media_Forwarder.py` | Main forwarder — backfills old media, then listens live, rotating accounts on `FloodWait` |
+| `SmartFill_Forwarder.py` | Diff-based forwarder — scans the target, then forwards only media missing from it |
+| `OneClick_Media_Forward.py` | Simple single-account forwarder for smaller jobs that don't need account rotation |
 
 ## Requirements
 
-- Windows / Mac / Linux
-- Python 3.7 or higher (recommended: 3.11)
-- A Telegram account
-- Telegram API credentials (free)
+- Python 3.7+
+- [Telethon](https://docs.telethon.dev/)
 
----
-
-## Step 1 — Install Python
-
-1. Go to https://www.python.org/downloads/
-2. Download and install Python 3.11 (recommended)
-3. During installation, **make sure to check "Add Python to PATH"**
-4. Open Command Prompt and verify:
-   ```
-   python --version
-   ```
-   You should see something like `Python 3.11.x`
-
----
-
-## Step 2 — Install Required Library
-
-Open Command Prompt and run:
-
-```
+```bash
 pip install telethon
 ```
 
----
+## Getting Telegram API credentials
 
-## Step 3 — Get Telegram API Credentials
+1. Go to [my.telegram.org](https://my.telegram.org) and log in with your phone number.
+2. Open **API Development Tools** and create an application.
+3. Note down the `api_id` and `api_hash` — you'll need one pair per account you want to use.
 
-You need a free API ID and API Hash from Telegram.
+## Configuration
 
-1. Go to https://my.telegram.org
-2. Log in with your Telegram phone number
-3. Click **"API Development Tools"**
-4. Fill in any app name (e.g. `MyForwarder`) and platform (e.g. `Desktop`)
-5. Click **Create Application**
-6. You will see your **`api_id`** (a number) and **`api_hash`** (a long string)
-7. Copy both — you'll need them in the script
-
----
-
-## Step 4 — Configure the Script
-
-Open `OneClick_Media_Forward_V2.py` in any text editor (Notepad, VS Code, etc.)
-
-Find this section at the top:
+All scripts read from `config.py`. Fill it in once:
 
 ```python
-api_id = XXXXXXXX                              # <-- Replace with your api_id
-api_hash = 'XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX'  # <-- Replace with your api_hash
+import os
 
-SOURCE = '@username_here'   # <-- Where to forward FROM
-TARGET = '@username_here'   # <-- Where to forward TO
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# Source and target chats — username, numeric ID, or phone number
+SOURCE = "source_chat_username_or_id"
+TARGET = "target_chat_username_or_id"
+
+# Account pool — add one or more accounts here.
+# A single account works fine; add more to enable flood-wait rotation.
+ACCOUNTS = [
+    {
+        "name": "account1",
+        "api_id": 123456,
+        "api_hash": "your_api_hash_here",
+        "session": os.path.join(BASE_DIR, "session_account1"),
+    },
+    # Add more accounts to enable automatic rotation on FloodWait
+]
+```
+## Usage
+
+### 1. Log in your accounts (first run only)
+
+Authenticates every account in `ACCOUNTS` and saves its session file so later runs don't need to log in again.
+
+```bash
+python login_accounts.py
 ```
 
-### Setting SOURCE and TARGET
+### 2. Forward everything, then listen live
 
-You can use any of these formats:
+Backfills all existing media from `SOURCE` to `TARGET`, tracking progress via a checkpoint file, then keeps listening for new messages. If an account gets flood-waited, it automatically switches to the next account in the pool and picks up where it left off.
 
-| Format | Example | Works For |
-|--------|---------|-----------|
-| `'@username'` | `'@mychannel'` | Public channels, groups, users |
-| Numeric ID | `1234567890` | Any chat you are a member of |
-| Phone number | `'+91XXXXXXXXXX'` | Contacts saved in your Telegram |
+after Successful login Run :-
+```bash
+python AccountSwitch_Media_Forwarder.py
+```
+### 3. If forwarding speed is high by await asyncio.sleep(0) then it will fill only what's missing in group
 
-#### Examples:
+Scans `TARGET` first to see what media already exists there, then scans `SOURCE` and forwards only the media that's missing — useful when a target channel was partially populated already and you don't want duplicates.
 
-```python
-# Forward from a public channel to your group
-SOURCE = '@bigchannel'
-TARGET = '@mygroup'
-
-# Forward from a group (numeric ID) to another group
-SOURCE = 381XXXXXXX
-TARGET = XXXXXXX263
-
-# Mix both formats
-SOURCE = '@bigchannel'
-TARGET = 515XXXXXXX
+```bash
+python SmartFill_Forwarder.py
 ```
 
-### How to find Numeric ID of a group/channel
+### 4. Simple single-account forwarding
 
-**Option 1 — From Telegram Web:**
-1. Open https://web.telegram.org
-2. Click on the group or channel
-3. Look at the URL — e.g. `web.telegram.org/k/#-100XXXXXXX890`
-4. The number after `#-100` is the ID → `1234567890`
+For smaller, one-off jobs where account rotation isn't needed. in v1.0.0
 
-**Option 2 — Run the script once:**
-If the script can't find your source/target, it will automatically print a list of all your chats with their IDs. Copy the correct ID from that list.
-
----
-
-## Step 5 — Run the Script
-
-1. Open Command Prompt
-2. Navigate to the directory where script is present
-3. Run the script:
-   ```
-   python OneClick_Media_Forward.py
-   ```
-4. First time only — it will ask for:
-   - Your phone number (with country code, e.g. `+91XXXXXXXXXX`)
-   - The OTP code sent to your Telegram app
-5. After login, it will start forwarding automatically
-
----
-
-## Step 6 — What Happens When You Run It
-
-```
-Fetching dialogs...
-Found source: 1234567890
-Found target: 9876543210
-Loaded 0 already forwarded IDs.
-Already forwarded: 0 messages
-Forwarding message ID 1
-Forwarding message ID 2
-Forwarding message ID 3
-...
-Done forwarding old messages. Now listening for new ones...
-Listening for new messages...
+```bash
+python OneClick_Media_Forward.py 
 ```
 
-- It first forwards all old media from the source
-- Then it stays running and forwards any new media in real-time
-- Press `Ctrl + C` to stop
+## How it works
 
----
+- **Checkpointing**: `AccountSwitch_Media_Forwarder.py` saves the last successfully forwarded message ID to `checkpoint.json` after every message (and after every account switch), so an interrupted run resumes exactly where it stopped.
+- **Duplicate prevention**: every forwarded message ID is appended to `forwarded_ids.txt`; all scripts consult this file before sending, so the same message is never forwarded twice.
+- **Album grouping**: messages that share a `grouped_id` (Telegram's way of marking an album) are buffered and sent together as a single album instead of as separate messages.
+- **Flood-wait rotation**: when Telegram raises `FloodWaitError`, the current account is marked as cooling down for that many seconds, and the next account in `ACCOUNTS` takes over. If every account is flood-waited, the script waits for whichever one recovers soonest.
 
-## Files Created by the Script
+## Troubleshooting
 
-| File | Purpose |
-|------|---------|
-| `forwarder_session.session` | Saves your Telegram login (so it doesn't ask every time) |
-| `forwarded_ids.txt` | Saves IDs of forwarded messages (prevents duplicates) |
+- **"ERROR finding source/target"** — double-check the identifier in `config.py`; make sure the logged-in account is a member of that chat, and that usernames include no leading `@` inconsistencies.
+- **Repeated FloodWait on all accounts** — add more accounts to the pool, or increase the delay between sends in the script (`asyncio.sleep(...)` calls).
+- **Nothing forwards on resume** — delete `checkpoint.json` only if you intentionally want to re-scan from the beginning; otherwise leave it in place so progress isn't lost.
 
-Both files are created automatically in the same folder as the script.
+## Contributing
 
-> **Note:** If you want to start fresh and re-forward everything, delete `forwarded_ids.txt`. If you want to re-login, delete `forwarder_session.session`.
+Contributions are welcome!
 
----
+1. Fork the repo and create a branch for your change.
+2. Keep changes focused — one feature or fix per pull request.
+3. Test your changes against a real (test) Telegram chat before submitting.
+4. Open a pull request describing what changed and why.
 
-## Adjusting Forward Speed
-
-In the script, find this line:
-
-```python
-await asyncio.sleep(1)
-```
-
-Change the number to control speed:
-
-| Value | Speed | Risk |
-|-------|-------|------|
-| `1` | Safe, 1 message/sec | No risk |
-| `0.5` | Faster | Low risk |
-| `0.3` | Fast | Medium risk |
-| `0` | Maximum speed | High risk of FloodWait |
-
-> Telegram may temporarily ban forwarding if you go too fast. The script handles this automatically and resumes after the wait.
-
----
-
-## Common Errors and Fixes
-
-| Error | Cause | Fix |
-|-------|-------|-----|
-| `Could not find source` | You are not a member of the source group/channel | Join the group/channel first |
-| `FloodWait` | Forwarding too fast | Script handles this automatically |
-| `WinError 1236` | Network dropped | Script reconnects automatically |
-| `Session error` | Corrupted session file | Delete `forwarder_session.session` and re-run |
-| `api_id invalid` | Wrong API credentials | Double-check your api_id and api_hash |
-| `ChatForwardsRestrictedError` | Source has restricted forwarding | Cannot bypass — Telegram restriction |
-
----
-
-## Important Notes
-
-- You must be a **member** of both the source and target group/channel
-- This script uses your **personal Telegram account** — use responsibly
-- Forwarding too aggressively may get your account flagged by Telegram
-- Do **not** share your `api_hash` or `forwarder_session.session` with anyone
-
----
-
-## License
-
-This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for details.
-
-Copyright (c) 2026 abhX64
-
----
+Bug reports and feature requests are welcome via GitHub Issues.
 
 ## Disclaimer
 
-This tool is for **educational purposes only**. The author is not responsible for any misuse. Use in compliance with [Telegram's Terms of Service](https://telegram.org/tos).
+This project is for educational and personal use. You are responsible for complying with [Telegram's Terms of Service](https://telegram.org/tos) and applicable law, including respecting copyright and the privacy of chat members, when forwarding content.
+
+## License
+
+[MIT](LICENSE)
